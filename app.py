@@ -169,7 +169,7 @@ if st.button("Generate Route") and st.session_state.route_addresses:
     if r.status_code == 200:
         result = r.json()
         steps = result['routes'][0]['steps']
-        ordered_coords = [start_coord]
+        ordered_coords = []
         for step in steps:
             if step['type'] == 'job':
                 ordered_coords.append(coords[step['id'] - 1])
@@ -189,6 +189,7 @@ if st.button("Generate Route") and st.session_state.route_addresses:
 with st.form(key='my_form'):
     st_folium(m, width=800, height=600)
     st.form_submit_button("")
+
 
 
 
