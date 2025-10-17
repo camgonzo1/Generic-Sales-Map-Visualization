@@ -80,6 +80,8 @@ The application uses obfuscated data for demonstration purposes:
 
 ## Installation
 
+Visit hosted application at https://generic-sales-map-visualization.streamlit.app/ or run locally:
+
 1. Clone this repository
 2. Install required packages:
 ```bash
@@ -102,3 +104,4 @@ streamlit run app.py
 ## Demo Data
 
 This application uses obfuscated demonstration data. All personal information, sales figures, and product names have been anonymized while maintaining the functional capabilities of the mapping and routing features.
+
