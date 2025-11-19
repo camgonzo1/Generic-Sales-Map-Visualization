@@ -212,19 +212,36 @@ if st.button("Generate Route") and st.session_state.route_addresses:
                 geometry_coordinates = dir_data['features'][0]['geometry']['coordinates']
                 path_lat_lon = [[coord[1], coord[0]] for coord in geometry_coordinates]
                 
-                # 2. Extract Text Instructions
+                # 2. Extract Text Instructions with Details
                 segments = dir_data['features'][0]['properties']['segments']
                 instructions = []
                 
                 for i, segment in enumerate(segments):
+                    # Lookup the address for the destination of this segment
                     dest_lon, dest_lat = ordered_coords[i+1]
-                    match = df[(df['Longitude'] == dest_lon) & (df['Latitude'] == dest_lat)]
-
-                    dest_name = match['Full_Address'].iloc[0]
-
-                    instructions.append(f"<b>To {dest_name if dest_name else i+1}:</b>") # Directions to the next stop
+                    match = df[(df['Latitude'] == dest_lat) & (df['Longitude'] == dest_lon)]
+                    
+                    # Use the address if found, otherwise fall back to Stop #
+                    dest_name = match['Full_Address'].values[0] if not match.empty else f"Stop {i+2}"
+                    
+                    instructions.append(f"<b>To {dest_name}:</b>")
+                    
                     for step in segment['steps']:
-                        instructions.append(f"- {step['instruction']}")
+                        instr = step.get('instruction', '')
+                        name = step.get('name', '')
+                        dist = step.get('distance', 0)
+                        
+                        # Format distance (e.g., 500m or 1.2km)
+                        if dist < 1000:
+                            dist_str = f"{int(dist)}m"
+                        else:
+                            dist_str = f"{dist/1000:.1f}km"
+                        
+                        # If the instruction is generic (doesn't include the street name), append it
+                        if name and name != '-' and name not in instr:
+                            instr += f" onto {name}"
+                            
+                        instructions.append(f"- {instr} ({dist_str})")
                 
                 # Save to Session State
                 st.session_state.route_geometry = path_lat_lon
@@ -270,7 +287,7 @@ if 'route_geometry' in st.session_state:
             if i == 0:
                 # STARTING POINT: Blue Pin
                 folium.Marker(
-                    location=[stop_coord[1], stop_coord[0]],
+                    location=[stop_coord[1] + 0.0001, stop_coord[0]],
                     popup="Start Point",
                     icon=folium.Icon(color="blue", icon="play")
                 ).add_to(m)
@@ -278,7 +295,7 @@ if 'route_geometry' in st.session_state:
                 # SUBSEQUENT STOPS: Red Pin with Number
                 # Using DivIcon to create a custom numbered marker
                 folium.Marker(
-                    location=[stop_coord[1], stop_coord[0]],
+                    location=[stop_coord[1] + 0.0001, stop_coord[0]],
                     popup=f"Stop #{i+1}",
                     icon=DivIcon(
                         icon_size=(30,30),
