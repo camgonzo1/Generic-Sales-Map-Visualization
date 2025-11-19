@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import folium
 from folium.plugins import MarkerCluster
+from folium.features import DivIcon
 from streamlit_folium import st_folium
 import openrouteservice
 
@@ -21,7 +22,6 @@ def load_data():
 
     return df
 
-
 df = load_data()
 
 # Sidebar Filters
@@ -31,13 +31,12 @@ filter_columns = ["Number of Practitioners"] + sorted([
     if pd.api.types.is_numeric_dtype(df[col]) and col not in not_include_columns
 ])
 
-selected_filter = st.sidebar.selectbox("Select Filter", filter_columns, index=filter_columns.index('Number of Practitioners'))
+selected_filter = st.sidebar.selectbox("Select Color Coding", filter_columns, index=filter_columns.index('Number of Practitioners'))
 
 checkbox_columns = sorted([
     col for col in df.columns
     if col not in ['City', 'State', 'Address', 'Zip', 'Latitude', 'Longitude', 'Full_Address']
 ])
-
 
 selected_columns = st.sidebar.multiselect("Select Data Columns for Popups", checkbox_columns, default=['First Name', 'Last Name', 'Specialty', 'Priority', 'Total Product1 Scripts 2024', 'Total Product1 Scripts 2025'])
 
@@ -50,9 +49,7 @@ if 'map_initialized' not in st.session_state:
 with st.sidebar:
     update_map = st.button("Generate Map")
 
-
 # Filtered Data
-# Alignment column has been removed in obfuscated data
 grouped_df = df.groupby(["Latitude", "Longitude"]).agg(lambda x: list(x) if len(x) > 1 else [x.iloc[0]]).reset_index()
 
 # Search Coordinates
@@ -127,7 +124,7 @@ if search_coords:
     folium.Marker(location=[search_coords[0] + 0.0005, search_coords[1]], icon=folium.Icon(color="red")).add_to(m)
     m.fit_bounds([[search_coords[0]-0.01, search_coords[1]-0.01], [search_coords[0]+0.01, search_coords[1]+0.01]])
 
-# Route Planner
+# --- ROUTE PLANNER SECTION ---
 st.markdown("## Route Planner")
 
 add_address = st.text_input("Enter address to add to route:")
@@ -144,13 +141,32 @@ if st.button("Add Address"):
 
 if st.button("Clear Route"):
     st.session_state.route_addresses = []
+    if 'route_geometry' in st.session_state:
+        del st.session_state.route_geometry
+    if 'ordered_stops' in st.session_state:
+        del st.session_state.ordered_stops
+    if 'route_instructions' in st.session_state:
+        del st.session_state.route_instructions
 
-st.write("Selected Addresses:")
+# Scrollable container for Selected Addresses
+st.markdown("<b>Selected Addresses:</b>", unsafe_allow_html=True)
+selected_html = "<ul style='margin: 0; padding-left: 20px;'>"
 for addr in st.session_state.route_addresses:
-    st.markdown(f"- {addr}")
+    selected_html += f"<li>{addr}</li>"
+selected_html += "</ul>"
+
+st.markdown(
+    f"""
+    <div style="height: 150px; overflow-y: scroll; border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f9f9f9; margin-bottom: 20px; color: black;">
+        {selected_html}
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
+ORS_API_KEY = "5b3ce3597851110001cf6248e9c6da4b46ae4c048d4997c54b6f01e1"
 
 if st.button("Generate Route") and st.session_state.route_addresses:
-    ORS_API_KEY = "5b3ce3597851110001cf6248e9c6da4b46ae4c048d4997c54b6f01e1"
     coords = []
     # Always start at the first selected address
     row = df[df['Full_Address'] == st.session_state.route_addresses[0]].iloc[0]
@@ -160,45 +176,120 @@ if st.button("Generate Route") and st.session_state.route_addresses:
         row = df[df['Full_Address'] == address].iloc[0]
         coords.append([row['Longitude'], row['Latitude']])
 
+    # 1. OPTIMIZATION API
     jobs = [{"id": i + 1, "location": coords[i]} for i in range(len(coords))]
     vehicles = [{"id": 1, "start": start_coord, "profile": "driving-car"}]
     payload = {"jobs": jobs, "vehicles": vehicles}
     headers = {"Authorization": ORS_API_KEY, "Content-Type": "application/json"}
+    
     r = requests.post("https://api.openrouteservice.org/optimization", json=payload, headers=headers)
 
     if r.status_code == 200:
         result = r.json()
         steps = result['routes'][0]['steps']
         ordered_coords = []
+        
+        # Extract ordered coordinates
         for step in steps:
             if step['type'] == 'job':
                 ordered_coords.append(coords[step['id'] - 1])
-        st.markdown("### Optimized Route:")
-        ordered_addresses = []
-        for lon, lat in ordered_coords:
-            match = df[(df['Latitude'] == lat) & (df['Longitude'] == lon)]
-            if not match.empty:
-                ordered_addresses.append(match['Full_Address'].values[0])
         
-        # Display only the addresses
-        for i, address in enumerate(ordered_addresses, 1):
-            st.write(f"{i}. {address}")
+        # 2. DIRECTIONS API
+        dir_headers = {
+            'Accept': 'application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8',
+            'Authorization': ORS_API_KEY,
+            'Content-Type': 'application/json; charset=utf-8'
+        }
+        dir_body = {"coordinates": ordered_coords}
+        
+        r_dir = requests.post('https://api.openrouteservice.org/v2/directions/driving-car/geojson', json=dir_body, headers=dir_headers)
+        
+        if r_dir.status_code == 200:
+            dir_data = r_dir.json()
+            
+            if 'features' in dir_data and len(dir_data['features']) > 0:
+                # 1. Extract Geometry
+                geometry_coordinates = dir_data['features'][0]['geometry']['coordinates']
+                path_lat_lon = [[coord[1], coord[0]] for coord in geometry_coordinates]
+                
+                # 2. Extract Text Instructions
+                segments = dir_data['features'][0]['properties']['segments']
+                instructions = []
+                
+                for i, segment in enumerate(segments):
+                    dest_lon, dest_lat = ordered_coords[i+1]
+                    match = df[(df['Longitude'] == dest_lon) & (df['Latitude'] == dest_lat)]
+
+                    dest_name = match['Full_Address'].iloc[0]
+
+                    instructions.append(f"<b>To {dest_name if dest_name else i+1}:</b>") # Directions to the next stop
+                    for step in segment['steps']:
+                        instructions.append(f"- {step['instruction']}")
+                
+                # Save to Session State
+                st.session_state.route_geometry = path_lat_lon
+                st.session_state.ordered_stops = ordered_coords
+                st.session_state.route_instructions = instructions
+                
+        else:
+            st.error(f"Directions generation failed: {r_dir.status_code}")
     else:
-        st.error(f"Route generation failed: {r.status_code}")
+        st.error(f"Optimization failed: {r.status_code}")
+
+# Display Instructions in Scrollable Box
+if 'route_instructions' in st.session_state:
+    st.markdown("### Turn-by-Turn Directions")
+    instructions_html = "<div style='font-family: sans-serif; font-size: 14px;'>"
+    for line in st.session_state.route_instructions:
+        instructions_html += f"{line}<br>"
+    instructions_html += "</div>"
+    
+    st.markdown(
+        f"""
+        <div style="height: 200px; overflow-y: scroll; border: 1px solid #ddd; padding: 10px; border-radius: 5px; background-color: #f9f9f9; color: black;">
+            {instructions_html}
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+
+# Render Route on Map
+if 'route_geometry' in st.session_state:
+    # Draw line
+    folium.PolyLine(
+        locations=st.session_state.route_geometry,
+        color="blue",
+        weight=5,
+        opacity=0.7,
+        tooltip="Optimized Route"
+    ).add_to(m)
+    
+    # Draw Pins
+    if 'ordered_stops' in st.session_state:
+        for i, stop_coord in enumerate(st.session_state.ordered_stops):
+            if i == 0:
+                # STARTING POINT: Blue Pin
+                folium.Marker(
+                    location=[stop_coord[1], stop_coord[0]],
+                    popup="Start Point",
+                    icon=folium.Icon(color="blue", icon="play")
+                ).add_to(m)
+            else:
+                # SUBSEQUENT STOPS: Red Pin with Number
+                # Using DivIcon to create a custom numbered marker
+                folium.Marker(
+                    location=[stop_coord[1], stop_coord[0]],
+                    popup=f"Stop #{i+1}",
+                    icon=DivIcon(
+                        icon_size=(30,30),
+                        icon_anchor=(15,15),
+                        html=f"""<div style="font-size: 12pt; color: white; background-color: #d32f2f;
+                                width: 30px; height: 30px; border-radius: 50%; text-align: center;
+                                line-height: 30px; font-weight: bold; border: 2px solid white; 
+                                box-shadow: 2px 2px 5px rgba(0,0,0,0.3);">{i+1}</div>"""
+                    )
+                ).add_to(m)
 
 with st.form(key='my_form'):
     st_folium(m, width=800, height=600)
     st.form_submit_button("")
-
-
-
-
-
-
-
-
-
-
-
-
-
