@@ -81,7 +81,7 @@ for _, row in grouped_df.iterrows():
         valid_priorities = [p for p in row['Priority'] if p != -1]
         color_value = min(valid_priorities) if valid_priorities else -1
     else:
-        sum(row[selected_filter])
+        color_value = sum(row[selected_filter])
     color = mcolors.to_hex(colormap(norm(color_value)))
     popup_html = f"""
         <div style='position: relative;'>
