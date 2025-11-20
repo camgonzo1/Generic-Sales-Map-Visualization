@@ -68,7 +68,7 @@ if selected_filter == 'Number of Practitioners':
 elif selected_filter == 'Priority':
     norm = mcolors.LogNorm(vmin=1, vmax=5)
 else:
-    norm = mcolors.Normalize(vmin=-df[selected_filter].max()/2, vmax=df[selected_filter].max())
+    norm = mcolors.PowerNorm(gamma=2.0, vmin=-df[selected_filter].max()/4, vmax=df[selected_filter].max()*1.25)
 
 colormap = plt.colormaps.get_cmap("viridis_r") if selected_filter == 'Priority' else plt.colormaps.get_cmap("viridis")
 m = folium.Map(location=[df["Latitude"].mean(), df["Longitude"].mean()], zoom_start=6)
